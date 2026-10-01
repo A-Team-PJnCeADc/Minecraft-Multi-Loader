@@ -1,0 +1,14 @@
+// loader-core Mod 发现、元数据聚合、依赖解析、生命周期编排
+//
+// INV-2：符号引用中不得出现 net.minecraft.*（可持 Object / Class<?> 引用）
+
+dependencies {
+    api project(':loader-api')
+    implementation project(':runtime-common')
+
+    // 端到端发现链路的测试：把适配器当夹具引入。
+    // 方向是 core-test -> adapt，不是 adapt -> core，所以适配器的依赖边界仍然干净。
+    testImplementation project(':adapt-fabric')
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

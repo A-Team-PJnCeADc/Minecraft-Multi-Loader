@@ -1,0 +1,26 @@
+// loader-mixin Mixin 集成（唯一字节码注入机制的宿主）
+//
+// 26.3 为 OFFICIAL 命名空间，MixinService.init() 固定 remap=false，不提供开关。
+//
+// 依赖 loader-core 的原因：MixinConfigManager.collect() 的输入是
+// LoadingModList（mod 集合的只读视图）。方向是 loader-mixin -> loader-core，
+// 没有反向依赖，因此不构成环。
+//
+// 注意：sponge-mixin 此处只声明坐标以保证它能被解析（版本正确性现在就被验证）；
+// 真正的 Mixin bootstrap 在 S6 接入。运行时 Mixin 由加载器自带，
+// 不打进 mod jar。
+
+dependencies {
+    api project(':loader-api')
+    implementation project(':loader-core')
+    implementation project(':loader-classloader')
+    implementation project(':runtime-common')
+
+    implementation libs.sponge.mixin
+    implementation libs.asm
+    implementation libs.asm.tree
+    implementation libs.gson
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

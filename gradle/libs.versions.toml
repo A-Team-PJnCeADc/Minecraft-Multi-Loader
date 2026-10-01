@@ -1,0 +1,72 @@
+# 版本目录 所有版本号的唯一真相来源。
+# 未在此处的版本号一律视为临时值。
+#
+# 实测依据（写入时已核实）：
+#   asm 9.8           最高 Opcodes 常量为 V25（class file 69），覆盖 MC 26.3 的 Java 25
+#   sponge-mixin      与 Fabric Loader / NeoForge 打包的同源版本
+#   fabricLoader 0.19.5       meta.fabricmc.net 当前 stable
+#   neoforge 26.3.0.38-beta   maven.neoforged.net 26.3 线最新
+#   forge 26.3-66.0.3         maven.minecraftforge.net 上存在；
+#                             该线最新为 26.3-66.0.8，此处按既定钉子保持 66.0.3
+
+[versions]
+minecraft = "26.3"
+java = "25"
+
+# 核心层依赖
+asm = "9.8"
+mixin = "0.17.3+mixin.0.8.7"
+
+# 适配层依赖
+gson = "2.14.0"
+# NeoForge 的 neoforge.mods.toml 是 TOML。手写 TOML 子集解析器风险高
+# （[[]] 数组表 vs [] 表的区别、转义、行尾注释、多行字符串），
+# 一处解析错就是"某个 mod 静默读错元数据"。
+# NeoForge 自己用的也是这个库（FancyModLoader/loader/build.gradle）。
+night-config = "3.9.0"
+
+# 目标加载器（本轮仅用于版本表与探测，不做实际解析）
+fabricLoader = "0.19.5"
+fabricApi = "0.160.6+26.3"
+neoforge = "26.3.0.38-beta"
+forge = "26.3-66.0.3"
+# 以下两个版本取自 neoforge-26.3.0.38-beta.pom 自己的依赖声明（权威来源，**不是 latest**）：
+#   net.neoforged:bus                    ->IEventBus    （独立产物）
+#   net.neoforged.fancymodloader:loader  ->@Mod / ModContainer （FML）
+# 二者是**不同的上游产物**，必须分开写坐标，不要合并。
+neoforgeBus = "8.0.5"
+fancyModLoader = "12.0.8"
+# NeoForge 26.3 自己的 POM 声明 maven-artifact:3.9.16；
+# 而 FancyModLoader 12.0.8 传递来的是 3.8.5（实测我们的类路径目前解析成 3.8.5）。
+# 取前者以对齐目标平台。
+mavenArtifact = "3.9.16"
+
+# 测试─
+junit = "6.1.3"
+
+[libraries]
+asm = { module = "org.ow2.asm:asm", version.ref = "asm" }
+asm-tree = { module = "org.ow2.asm:asm-tree", version.ref = "asm" }
+asm-commons = { module = "org.ow2.asm:asm-commons", version.ref = "asm" }
+asm-util = { module = "org.ow2.asm:asm-util", version.ref = "asm" }
+
+# NeoForge 的两个**不同**产物（bridge-neoforge-api 需要真实类型，不手写 stub）。
+# 使用时必须排除传递依赖里的 asm（它声明 9.10.1，与本工程锁定的 9.8 冲突）。
+neoforge-bus = { module = "net.neoforged:bus", version.ref = "neoforgeBus" }
+neoforge-fancymodloader-loader = { module = "net.neoforged.fancymodloader:loader", version.ref = "fancyModLoader" }
+# IModInfo.getVersion() 返回 org.apache.maven.artifact.versioning.ArtifactVersion。
+# 版本取 NeoForge 26.3 自己声明的 3.9.16（loader 传递来的是 3.8.5，两者不一致 ——
+# 显式声明既对齐目标平台版本，也避免依赖传递解析的结果）。
+maven-artifact = { module = "org.apache.maven:maven-artifact", version.ref = "mavenArtifact" }
+
+sponge-mixin = { module = "net.fabricmc:sponge-mixin", version.ref = "mixin" }
+# Fabric Loader 的 api 包（net.fabricmc.loader.api.FabricLoader）与 impl 包
+# （net.fabricmc.loader.impl.FabricLoaderImpl）都在这个 artifact 里。
+# bridge-fabric-api 需要**真实**产物（不手写 stub），见 docs/04 §3。
+fabric-loader = { module = "net.fabricmc:fabric-loader", version.ref = "fabricLoader" }
+
+gson = { module = "com.google.code.gson:gson", version.ref = "gson" }
+night-config-toml = { module = "com.electronwill.night-config:toml", version.ref = "night-config" }
+
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit" }
+junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher", version.ref = "junit" }

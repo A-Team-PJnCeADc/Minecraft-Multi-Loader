@@ -1,0 +1,169 @@
+// loader-agent javaagent 入口、启动参数、版本探测、引导编排、启动器
+//
+// 这是唯一带 Premain-Class 的模块，也是唯一允许把核心四层串起来的地方。
+
+dependencies {
+    api project(':loader-api')
+    implementation project(':runtime-common')
+    implementation project(':loader-core')
+    implementation project(':loader-classloader')
+    implementation project(':loader-mixin')
+
+    // 适配器必须出现在运行时类路径上：它们通过 META-INF/services 注册，
+    // 由 ServiceRegistry 在运行时发现。用 runtimeOnly 表达"运行时需要但编译期不引用"，
+    // 这样 loader-agent 的源码里不会出现任何具体适配器的符号引用。
+    runtimeOnly project(':adapt-fabric')
+    runtimeOnly project(':adapt-neoforge')
+    // 桥接层必须在运行时类路径上，否则 @Mod 构造器的服务注入会走到
+    // "找不到 provider" 那是设计要的响亮失败，但在这里成因是"忘了加依赖"，
+    // 而不是"桥接没实现"。两者报错一样，容易误判。
+    runtimeOnly project(':bridge-neoforge-api')
+    // Fabric 侧的桥接也必须在运行时类路径上：它的 FabricMultiLoaderExtension
+    // 是"捕获加载器上下文供静态访问读取"的唯一入口。
+    //
+    //   漏了它的症状与"核心层没接 loadAll 调用点"**完全相同**：
+    //   loadAll 找不到扩展 ->钩子不执行 ->日志里什么都没有。
+    //   这两种成因的修法完全不同（前者查 build.gradle，后者查 LoaderBootstrap），
+    //   所以扩展自己会在被调用时打印名字与上下文 那行日志是唯一能把两者分开的证据。
+    runtimeOnly project(':bridge-fabric-api')
+
+    // 解析 Mojang version json 需要 JSON；这是加载器 install 侧的能力，
+    // 与映射无关，不触碰 INV-1。
+    implementation libs.gson
+
+    // 测试用 ASM 合成 fixture jar（真实 26.x / 1.21.x jar 未必在每台机器上）。
+    // 只用于测试，不进主产物。
+    testImplementation libs.asm
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}
+
+// Q1 决策：(a) 替换 launch profile 的 main 为 dev.multiloader.launcher.Main。
+// agent 在 premain 完成加载器层初始化；游戏类随后由 launcher.Main 在
+// TransformingClassLoader 中加载。
+jar {
+    manifest {
+        attributes(
+                'Premain-Class'            : 'dev.multiloader.agent.MultiLoaderAgent',
+                'Agent-Class'              : 'dev.multiloader.agent.MultiLoaderAgent',
+                'Can-Retransform-Classes'  : 'true',
+                'Can-Redefine-Classes'     : 'false',
+                'Implementation-Title'     : 'MultiLoader Agent',
+                'Implementation-Version'   : project.version
+        )
+    }
+}
+
+
+// 探测排障工具：对任意 jar/classpath 打印版本与命名空间判定
+//   ./gradlew :loader-agent:probeTool -Pjars="/path/a.jar,/path/b.jar"
+tasks.register('probeTool', JavaExec) {
+    group = 'multiloader'
+    description = '对给定 jar/classpath 运行版本与命名空间探测（排障用）'
+
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.multiloader.agent.ProbeTool'
+
+    if (project.hasProperty('jars')) {
+        args(project.property('jars').toString().split(','))
+    }
+    if (project.hasProperty('mcVersion')) {
+        systemProperty 'probe.mcVersion', project.property('mcVersion')
+    }
+    if (project.hasProperty('verbose')) {
+        systemProperty 'multiloader.verbose', 'true'
+    }
+}
+
+
+// 游戏启动器（S6 起使用）
+//
+// 目标 MC 安装的位置由 -PmcHome=... 指定，默认取本机已知路径。
+// 需要 mode=vanilla 时可加 -Pvanilla=1 跑基线对照。
+//   ./gradlew :loader-agent:runGame
+//   ./gradlew :loader-agent:runGame -Pvanilla=1
+//   ./gradlew :loader-agent:runGame -Pmode=client
+//   ./gradlew :loader-agent:runGame -PdryRun=1
+tasks.register('runGame', JavaExec) {
+    group = 'multiloader'
+    description = '按 Mojang version json 拉取游戏进程（server 默认，可 -Pmode=client）'
+
+    // agent 必须来自已打包的 jar：Premain-Class 在 manifest 里，
+    // 光有 classes 目录挂不上 -javaagent
+    dependsOn tasks.named('jar')
+    // 两种格式的测试 mod 都要产出：验证"同一实例发现多个不同格式的 mod"。
+    dependsOn ':testmods:fabric:jar'
+    dependsOn ':testmods:neoforge:jar'
+    classpath = sourceSets.main.runtimeClasspath
+    mainClass = 'dev.multiloader.agent.MultiLoaderLauncher'
+
+    def mcHome = project.findProperty('mcHome') ?: '/home/user/桌面/minecraft/.minecraft'
+    def mode = project.findProperty('mode') ?: 'server'
+    def smoke = project.hasProperty('smoke') ? project.property('smoke') : '1'
+    def dryRun = project.hasProperty('dryRun') ? project.property('dryRun') : null
+    def vanilla = project.hasProperty('vanilla')
+
+    // 子 JVM 需要能看见我们的模块与其第三方依赖（ASM / Mixin / Gson）
+    def runtimeCp = sourceSets.main.runtimeClasspath.files.collect { it.absolutePath }.join(',')
+
+    doFirst {
+        // 服务端优先走 bundler 路线：references/server/server.jar 若在，就默认用它。
+        // 没有则退回 version json 路线（客户端用）。
+        def defaultBundle = new File(rootProject.projectDir, 'references/server/server.jar')
+        def bundle = project.findProperty('bundle')
+        if (bundle == null && mode == 'server' && defaultBundle.isFile()) {
+            bundle = defaultBundle.absolutePath
+        }
+
+        // 把测试 mod 摆到 mods/ 下。清掉旧的 jar：残留的同名不同内容 jar
+        // 会让"这个行为到底是哪一版 mod 产生的"变得无法判断。
+        def modsDir = new File(project.projectDir, "runs/${mode}/mods")
+        modsDir.mkdirs()
+        modsDir.listFiles()?.findAll { it.name.endsWith('.jar') }?.each { it.delete() }
+
+        // 两种格式的测试 mod 都摆进去：
+        //   fabric   ->fabric.mod.json
+        //   neoforge ->META-INF/neoforge.mods.toml
+        // 这样一次运行就能验证"同一实例发现多个不同格式的 mod"，
+        // 而不必分别跑两次再靠人脑做集合运算。
+        ['fabric', 'neoforge'].each { format ->
+            def testModJar = project(":testmods:${format}").tasks.named('jar').get()
+                    .archiveFile.get().asFile
+            java.nio.file.Files.copy(testModJar.toPath(),
+                    new File(modsDir, testModJar.name).toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+            logger.lifecycle("[runGame] staged test mod (${format}) -> ${modsDir}/${testModJar.name}")
+        }
+
+        def list = [
+                '--game-dir', "${project.projectDir}/runs/${mode}",
+                '--mc-version', (project.findProperty('mcVersion') ?: '26.3').toString(),
+                '--side', mode
+        ]
+        if (bundle != null) {
+            list += ['--bundle', bundle.toString()]
+            list += ['--jvm-args', (project.findProperty('jvmArgs') ?: '-Xmx2G').toString()]
+        } else {
+            list += ['--versions-dir', "${mcHome}/versions"]
+            list += ['--libraries-dir', "${mcHome}/libraries"]
+        }
+        list += ['--extra-cp', runtimeCp]
+
+        if (vanilla) {
+            list += ['--vanilla']
+        } else {
+            list += ['--agent-jar', tasks.named('jar').get().archiveFile.get().asFile.absolutePath]
+        }
+        if (project.hasProperty('offline')) {
+            list += ['--offline', project.property('offline').toString()]
+        }
+        if (smoke == '1') {
+            list += ['--smoke']
+        }
+        if (dryRun == '1') {
+            list += ['--dry-run']
+        }
+        logger.lifecycle("[runGame] mode=${mode} vanilla=${vanilla} smoke=${smoke} bundle=${bundle ?: '<versions-dir>'}")
+        args(list)
+    }
+}

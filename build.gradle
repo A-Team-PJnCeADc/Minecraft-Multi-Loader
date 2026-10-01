@@ -1,0 +1,60 @@
+// MultiLoader 三加载器统一加载器（Fabric + NeoForge + Forge）
+// 目标平台：Minecraft 26.3（未混淆，无 SRG / 无 Yarn / 无 Intermediary）
+//
+// 本文件只做最少的公共配置。模块级依赖各自写在 <module>/build.gradle。
+
+plugins {
+    id 'base'
+}
+
+allprojects {
+    group = 'dev.multiloader'
+    version = rootProject.property('multiloader_version')
+}
+
+subprojects {
+    apply plugin: 'java-library'
+
+    java {
+        toolchain {
+            languageVersion = JavaLanguageVersion.of(rootProject.property('java_version') as int)
+        }
+    }
+
+    tasks.withType(JavaCompile).configureEach {
+        // MC 26.3 要求 class file 69（Java 25）
+        options.release = rootProject.property('java_version') as int
+        options.encoding = 'UTF-8'
+        // 加载器工程会大量持有运行时才知道的类型，保留参数名便于诊断
+        options.compilerArgs << '-parameters'
+    }
+
+    repositories {
+        mavenCentral()
+        // sponge-mixin 与 Fabric API 发布在这里，不在 Maven Central
+        maven {
+            name = 'Fabric'
+            url = 'https://maven.fabricmc.net/'
+        }
+        // NeoForge 的 Bus 与 FancyModLoader 只发布在这里（mavenCentral 没有）。
+        // 实测可达（HTTP 200）。bridge-neoforge-api 需要**真实**产物而不是手写 stub：
+        // 手写 stub 会得到"看起来能编译、运行时类型不匹配"的结果 ——
+        // 同类的坑本项目已经踩过（CallbackInfo 的类标识问题）。
+        maven {
+            name = 'NeoForged'
+            url = 'https://maven.neoforged.net/releases'
+        }
+        // Mojang 的库只在官方库站点（com.mojang:logging 等）。
+        // FancyModLoader 传递依赖了 com.mojang:logging:1.1.1，
+        // 不加这个仓库会解析失败（实测 FAILED），而失败发生在依赖解析阶段、
+        // 表现为"loader 拿到了但子依赖缺"，容易误判成版本不匹配。
+        maven {
+            name = 'Mojang'
+            url = 'https://libraries.minecraft.net/'
+        }
+    }
+
+    tasks.withType(Test).configureEach {
+        useJUnitPlatform()
+    }
+}

@@ -1,0 +1,9 @@
+// runtime-common 跨层共用的最小工具集
+//
+// 约束：
+//   1. 零外部依赖（只用 JDK）。不要在这里加 ASM / Mixin / Gson / 映射工具。
+//   2. 不得依赖 loader-api 或任何其他本工程模块，否则会形成环。
+//   3. 只放与平台无关的东西：命名空间枚举、日志门面。
+//
+// 刻意不放在这里（留给后续兼容层）：
+//   NameSpaceGraph / MappingConverter / MappingRegistry

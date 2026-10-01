@@ -1,0 +1,25 @@
+// adapt-fabric Fabric 格式适配器（fabric.mod.json）
+//
+// 依赖边界（硬约束）：
+//   只允许 project(':loader-api') 与 project(':runtime-common')。
+//   不得依赖 loader-core / loader-classloader / loader-mixin 这三条才是
+//   INV-1 的实质边界（适配器不能反向依赖核心链路）。
+//
+// runtime-common 允许依赖的理由：它是零外部依赖的工具层（Log / Side / JarEntries）。
+// 禁止它只会逼适配器复制一份工具类，反而更脏。
+//
+// Gson 仅用于解析 fabric.mod.json：属于适配器的实现细节，因此用 implementation
+// 而非 api，不会泄漏到 loader-api 的类路径。
+//
+// 注意：这里**没有** testImplementation project(':loader-core')。
+// 端到端发现链路的测试住在 loader-core，由那边 testImplementation 引入本适配器。
+// 本模块的测试完全自包含。
+
+dependencies {
+    api project(':loader-api')
+    implementation project(':runtime-common')
+    implementation libs.gson
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

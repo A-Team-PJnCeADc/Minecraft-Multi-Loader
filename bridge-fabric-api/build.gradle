@@ -1,0 +1,33 @@
+// bridge-fabric-api Fabric 加载器 API 的运行时桥接（设计见 docs/04）
+//
+// 依赖边界（Q4 的 INV 表，硬约束）：
+//   允许：bridge-api-common + Fabric 产物 + runtime-common
+//   禁止：核心五模块（api/core/classloader/mixin/agent）
+//
+// 与 bridge-neoforge-api 的形态差异（见 docs/04 §1）
+// NeoForge 是**构造器注入**（加载器调 mod 的构造器，按 FQN 提供服务）；
+// Fabric 是**静态访问**（mod 在 onInitialize 里主动调 FabricLoader.getInstance()）。
+// 所以本模块的产物不是 provider，而是一个全局可访问的上下文对象 ——
+// 名字对称，形态完全不同。
+
+dependencies {
+    api project(':bridge-api-common')
+    implementation project(':runtime-common')
+
+    // 需要**真实** Fabric 产物，不是手写 stub：mod 的字节码里引用
+    // net.fabricmc.loader.api.FabricLoader，运行时必须解析到真实类型。
+    // 手写 stub 会得到"编译通过、运行时类型不匹配"的结果（本项目已踩过同类坑）。
+    //
+    // 实测：0.19.5 是 maven.fabricmc.net 上当前的 <release>，与版本目录一致。
+    // 仓库 https://maven.fabricmc.net/ 已在根 build.gradle 配置。
+    //
+    // 此处**刻意先不加 asm exclude**：neoforge 那两个产物各自声明了 asm 9.10.1，
+    // 排除点很明确；而 fabric-loader 的 POM **没有**声明 asm（实测无命中），
+    // 携带者在下游某处。先把 compileClasspath 解析出来看清来源，再在**正确的源头**
+    // 上加排除 exclude 打错对象不会有任何报错，只会让运行时出现第二份 ASM，
+    // 症状是 ClassNode 类型不兼容、Mixin 静默失效。
+    implementation libs.fabric.loader
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

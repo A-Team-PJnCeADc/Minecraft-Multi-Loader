@@ -1,0 +1,12 @@
+// adapt-forge Forge 格式适配器（META-INF/mods.toml + MANIFEST.MF）
+//
+// 本轮（S0~S5）不实现。
+//
+// 实现时需注意 MANIFEST.MF 里的 Forge 特有属性：
+//   FMLModType / FMLCorePlugin / FMLCorePluginContainsFMLMod / FMLAT
+// 其中 FMLCorePlugin 指向 coremod（ITransformer 路径），
+// 与"Mixin 唯一注入机制"相冲突，只在 compat-legacy-forge 里处理。
+
+dependencies {
+    api project(':loader-api')
+}

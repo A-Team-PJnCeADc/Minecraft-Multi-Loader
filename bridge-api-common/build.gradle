@@ -1,0 +1,22 @@
+// bridge-api-common 跨加载器**统一事件层**（设计见 docs/02-bridge-design.md §1）
+//
+// 依赖边界（Q4 的 INV 表，硬约束）：
+//   只允许 project(':loader-api')。
+//   **不得**依赖任何加载器产物（NeoForge / Fabric / Forge）
+//   更不得依赖核心五模块。这一条与 adapt-* 的边界同源：bridge 与 adapt
+//   都处在"可插拔外侧"，核心层通过 MultiLoaderExtension 反向注册接入它们。
+//
+// 与 bridge-neoforge-api 的分工（这是双层设计的关键，不要合并）：
+//   本模块 = 统一事件层：跨加载器通用事件（玩家加入、方块破坏、服务端启动…），
+//            common 模块据此写业务逻辑，不感知任何加载器的语义。
+//   原生层   = 保留各加载器原生事件类型与调用约定（优先级、可取消、结果类型）。
+//
+//   只做转发 ->common 层被 NeoForge 的事件语义污染；
+//   只做统一 ->覆盖不到 NeoForge 特有事件。
+
+dependencies {
+    api project(':loader-api')
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

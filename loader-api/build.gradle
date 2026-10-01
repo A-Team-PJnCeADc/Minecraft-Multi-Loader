@@ -1,0 +1,19 @@
+// loader-api 纯接口 SPI 层
+//
+// INV-1（硬不变量）：
+//   本模块的编译类路径与符号引用中，不得出现
+//     ASM / Mixin / Minecraft / tiny-remapper / SrgUtils / 任何映射类型
+//
+// 验收命令：
+//   ./gradlew :loader-api:dependencies --configuration compileClasspath
+//   必须输出 No dependencies
+//
+// 因此 dependencies {} 里只有 testImplementation 测试依赖不进 compileClasspath，
+// 不破坏 INV-1。加完测试依赖后要重新跑一次上面的验收命令确认这一点。
+//
+// 接口中出现的类型只能是 JDK 类型或本模块自身的接口/record。
+
+dependencies {
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

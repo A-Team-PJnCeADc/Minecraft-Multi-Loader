@@ -1,0 +1,41 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+rootProject.name = 'MultiLoader'
+
+
+// 核心层（INV-1：编译类路径与符号引用中不得出现任何映射工具）
+
+include 'runtime-common'
+include 'loader-api'
+include 'loader-core'
+include 'loader-classloader'
+include 'loader-mixin'
+include 'loader-agent'
+
+
+// 格式适配层（每个适配器只依赖 loader-api + runtime-common，互相之间零依赖）
+
+include 'adapt-fabric'
+include 'adapt-neoforge'
+include 'adapt-forge'
+
+// 桥接层（bridge
+// 可插拔外侧：与 adapt-* 同源约束 核心五模块**禁止**依赖任何 bridge-*，
+// 由核心层经 MultiLoaderExtension 反向注册接入（ServiceLoader）。
+// 设计见 docs/02-bridge-design.md（Q4 的 INV 表）。
+include 'bridge-api-common'
+include 'bridge-neoforge-api'
+include 'bridge-fabric-api'
+
+// 测试载体
+// 产出真 mod jar，由 :loader-agent:runGame 拷进 runs/<mode>/mods/。
+// 两种格式各一个：用于验证"同一实例发现多个不同格式的 mod"。
+include 'testmods:fabric'
+include 'testmods:neoforge'
+
+// references/ 是只读上游镜像，刻意不 include。

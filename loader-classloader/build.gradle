@@ -1,0 +1,16 @@
+// loader-classloader ClassLoaderGraph / TransformingClassLoader / ClassProcessorSet
+//
+// INV-2：符号引用中不得出现 net.minecraft.*
+// ASM 是本层唯一允许的第三方依赖（字节码转换），但不得引入任何映射工具。
+
+dependencies {
+    api project(':loader-api')
+    implementation project(':runtime-common')
+
+    implementation libs.asm
+    implementation libs.asm.tree
+    implementation libs.asm.commons
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

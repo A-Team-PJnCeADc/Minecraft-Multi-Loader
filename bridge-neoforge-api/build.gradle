@@ -1,0 +1,43 @@
+// bridge-neoforge-api NeoForge **原生事件层**（设计见 docs/02-bridge-design.md §1）
+//
+// 依赖边界（Q4 的 INV 表，硬约束）：
+//   允许：bridge-api-common + NeoForge 产物
+//   禁止：核心五模块（api/core/classloader/mixin/agent）
+//
+// 两份 NeoForge 坐标必须**分开写**（来自 neoforge-26.3.0.38-beta.pom 的依赖声明，
+// 不是猜的 lo／latest）：它们分属两个不同的上游产物，
+//   IEventBus    ← net.neoforged:bus                    （独立产物）
+//   ModContainer ← net.neoforged.fancymodloader:loader  （FML）
+// 误以为是同一个产物会诱使人手写一份 stub，那会得到
+// "看起来能编译、运行时类型不匹配"的结果。
+//
+// ⚠ ASM 排除：这两个产物的传递依赖声明了 asm **9.10.1**，而本工程锁定 **9.8**。
+// 不排除就会在类路径上出现第二份 ASM，而两份 ASM 会让
+// org.objectweb.asm.tree.ClassNode 变成两个不同的类 ——
+// Mixin 与我们的转换管道正是用 ClassNode 交换数据的，类型不兼容即静默失败。
+// 本项目已经实际踩过这个坑，所以这里显式排除而不是"先看看会不会出问题"。
+//
+// 用 implementation 而非 compileOnly：mod 的 @Mod 类在字节码里引用了
+// net.neoforged.bus.api.IEventBus，运行时必须能解析到**真实的**那个类型 ——
+// 本桥接就是 NeoForge API 在本加载器内的运行时提供者。
+
+dependencies {
+    api project(':bridge-api-common')
+    // runtime-common 是零外部依赖的工具层（Log / Side / JarEntries）。
+    // 与 adapt-* 同一条理由：禁止它只会逼适配/桥接层复制一份工具类，反而更脏。
+    implementation project(':runtime-common')
+
+    implementation(libs.neoforge.bus) {
+        exclude group: 'org.ow2.asm'
+    }
+    implementation(libs.neoforge.fancymodloader.loader) {
+        exclude group: 'org.ow2.asm'
+    }
+    // IModInfo.getVersion() 返回 ArtifactVersion。显式声明而不是依赖 loader 的传递版本：
+    // 传递来的是 3.8.5，而 NeoForge 26.3 声明 3.9.16（实测两者不一致）。
+    // 依赖传递解析的结果会让"我们对着哪个版本实现"变得不可见。
+    implementation libs.maven.artifact
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}

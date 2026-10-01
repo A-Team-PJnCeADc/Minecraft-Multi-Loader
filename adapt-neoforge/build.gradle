@@ -1,0 +1,125 @@
+// adapt-neoforge NeoForge 格式适配器（META-INF/neoforge.mods.toml）
+//
+// 依赖边界（硬约束）：
+//   只允许 project(':loader-api') 与 project(':runtime-common')。
+//   不得依赖 loader-core / loader-classloader / loader-mixin 那三条才是
+//   INV-1 的实质边界（适配器不能反向依赖核心链路）。
+//
+// night-config:toml 仅用于解析 neoforge.mods.toml：与 adapt-fabric 用 gson 解析
+// fabric.mod.json 属于同一类（适配器为本格式引入的解析库、用 implementation
+// 不泄漏到 loader-api 类路径）。NeoForge 自己也用这个库解析同一份文件。
+//
+// 注意：这里**没有** testImplementation project(':loader-core')。
+// 端到端发现链路的测试住在 loader-core，由那边 testImplementation 引入本适配器。
+
+dependencies {
+    api project(':loader-api')
+    implementation project(':runtime-common')
+    implementation libs.night.config.toml
+    // 扫描 mod jar 内的 @Mod 类需要读字节码。ASM 是本工程锁定的字节码库
+    // （见 libs.versions.toml 的 9.8 说明）。
+    implementation libs.asm
+    implementation libs.asm.tree
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.platform.launcher
+}
+
+
+// 反向对照（negative control）
+//
+// 为什么需要它：测试全绿本身**不证明**测试能发现问题。夹具没覆盖到失败输入形态时，
+// 一个有缺陷的实现照样全绿 本项目已经因此吃过一次亏（合成夹具用了 visible 注解，
+// 而真实注解是 CLASS 保留，结果"只读 visible"的缺陷一直测不出来）。
+//
+// 做法：故意改坏一处**刻意的设计取舍**，确认对应测试真的变红，再恢复并确认变绿。
+// 关键是"原子性" 任何一步异常都必须把源码恢复，绝不能留下改坏的实现。
+// 这里用 finally + 备份字节恢复，而不是"记得手动恢复"。
+//
+// 这是通用模式，其它模块照搬即可（改坏哪一处、跑哪个 task 由模块自己填）。
+tasks.register('reverseControl') {
+    group = 'verification'
+    description = '反向对照：故意改坏 discouraged 依赖映射，确认测试变红；随后恢复并确认变绿'
+
+    def sourceFile = layout.projectDirectory
+            .file('src/main/java/dev/multiloader/adapt/neoforge/NeoForgeModFileReader.java')
+    def originalText = '"discouraged", DependencyKind.OPTIONAL'
+    def brokenText = '"discouraged", DependencyKind.REQUIRED'
+    def expectedFailingTest = 'nonRequiredDependencyTypesDoNotBecomeRequired'
+
+    doLast {
+        File source = sourceFile.asFile
+        if (!source.isFile()) {
+            throw new GradleException("反向对照找不到目标源文件: ${source}")
+        }
+        byte[] backup = source.bytes   // 用字节备份：恢复时不可能因换行/编码差异而失真
+
+        try {
+            String text = source.getText('UTF-8')
+            if (!text.contains(originalText)) {
+                throw new GradleException(
+                        "反向对照无法定位待改坏的片段（${originalText}）。" +
+                        "实现变了就要同步更新这个 task 否则它会静默地什么都不改，然后「通过」。")
+            }
+            source.setText(text.replace(originalText, brokenText), 'UTF-8')
+            logger.lifecycle('[reverseControl] 已改坏实现：discouraged ->REQUIRED')
+
+            // 期望：至少 assertion 那条测试失败（其它测试不应受影响）
+            int brokenExit = runIsolatedTest()
+            if (brokenExit == 0) {
+                throw new GradleException(
+                        "[reverseControl] 改坏实现后测试仍然通过 " +
+                        "说明 ${expectedFailingTest} 并没有真正覆盖这个取舍，测试是不可信的。")
+            }
+            logger.lifecycle('[reverseControl] 改坏后测试如期失败（exit={}）', brokenExit)
+
+            // 恢复，再确认变绿
+            source.bytes = backup
+            int restoredExit = runIsolatedTest()
+            if (restoredExit != 0) {
+                throw new GradleException(
+                        "[reverseControl] 恢复后测试仍然失败（exit=${restoredExit}）—— " +
+                        "实现或环境有问题，请检查。源码已从备份恢复。")
+            }
+            logger.lifecycle('[reverseControl] 恢复后测试如期通过（exit=0）')
+            logger.lifecycle('[reverseControl] 结论：{} 确实能捕获该取舍的回归', expectedFailingTest)
+        } finally {
+            // 无论走哪条路径，源码都回到原始字节。
+            // 恢复本身也不能抛异常把原始错误盖掉，所以独立 try。
+            try {
+                source.bytes = backup
+            } catch (Exception e) {
+                logger.error('[reverseControl] 恢复源码失败！请手动检查 {}', source, e)
+            }
+        }
+    }
+}
+
+/**
+ * 跑一次隔离子构建的 {@code :adapt-neoforge:test}，返回退出码。
+ *
+ * <p>必须开**子构建**：本 task 期望测试**失败**，而依赖 test 任务会让
+ * Gradle 直接把自己的构建判失败，表达不了"预期失败"。
+*/
+private int runIsolatedTest() {
+    File rootDir = rootProject.projectDir
+    List<String> command = [new File(rootDir, 'gradlew').absolutePath,
+                            ':adapt-neoforge:test', '--rerun-tasks', '--console=plain']
+    ProcessBuilder builder = new ProcessBuilder(command)
+            .directory(rootDir)
+            .redirectErrorStream(true)
+    Process process = builder.start()
+    // 必须抽干输出流：管道缓冲区满了子进程会阻塞在 write 上，表现为"卡住"而不是失败
+    process.inputStream.withReader('UTF-8') { reader -> reader.eachLine { } }
+
+    // 带超时等待，避免任何异常情况把整个构建挂死
+    long deadline = System.currentTimeMillis() + 10 * 60 * 1000L
+    while (process.isAlive() && System.currentTimeMillis() < deadline) {
+        Thread.sleep(500)
+    }
+    if (process.isAlive()) {
+        process.destroyForcibly()
+        throw new GradleException('[reverseControl] 子构建超过 10 分钟未结束，已强制终止')
+    }
+    return process.exitValue()
+}
